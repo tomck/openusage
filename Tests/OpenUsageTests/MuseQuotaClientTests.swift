@@ -147,6 +147,66 @@ final class MuseQuotaClientTests: XCTestCase {
         XCTAssertEqual(
             usage.weeklyResetsAt, Date(timeIntervalSince1970: 1_789_344_000))
         XCTAssertEqual(usage.windowDurationMinutes, 300)
+        XCTAssertTrue(usage.upgradeAvailable)
+    }
+
+    func testFlooredExhaustionAppendsLimitNotice() {
+        let usage = MuseQuotaUsage(
+            tier: "tier-123",
+            planDisplayName: nil,
+            upgradeAvailable: true,
+            weeklyUsedPercent: 99,
+            windowUsedPercent: 64,
+            weeklyResetsAt: Date(timeIntervalSince1970: 1_789_948_800),
+            windowResetsAt: Date(timeIntervalSince1970: 1_789_727_758),
+            windowDurationMinutes: 300)
+        let lines = MuseQuotaClient.quotaLines(usage: usage)
+        // Measured gauges stay intact — no fabricated 100%.
+        XCTAssertEqual(museProgress(lines, "Weekly")?.used, 99)
+        XCTAssertEqual(museProgress(lines, "Session")?.used, 64)
+        let texts = lines.compactMap { line -> String? in
+            if case .text(let label, let value, _, _) = line, label == "Usage limit reached" {
+                return value
+            }
+            return nil
+        }
+        XCTAssertEqual(texts.count, 1, "want one notice for the floored-99 weekly, none for the 64 session")
+        XCTAssertTrue(texts[0].contains("/upgrade"))
+        XCTAssertTrue(texts[0].contains("accountscenter.meta.com"))
+        XCTAssertTrue(texts[0].contains("usage to reset at"))
+    }
+
+    func testFlooredExhaustionBelowThresholdStaysSilent() {
+        let usage = MuseQuotaUsage(
+            tier: "tier-123",
+            weeklyUsedPercent: 98,
+            windowUsedPercent: 64,
+            weeklyResetsAt: Date(timeIntervalSince1970: 1_789_948_800),
+            windowResetsAt: Date(timeIntervalSince1970: 1_789_727_758))
+        let lines = MuseQuotaClient.quotaLines(usage: usage)
+        XCTAssertFalse(lines.contains {
+            if case .text(let label, _, _, _) = $0, label == "Usage limit reached" { return true }
+            return false
+        })
+    }
+
+    func testFlooredExhaustionOmitsUpgradeLinkWithoutFlag() {
+        let usage = MuseQuotaUsage(
+            tier: "tier-123",
+            weeklyUsedPercent: 99,
+            windowUsedPercent: 10,
+            weeklyResetsAt: Date(timeIntervalSince1970: 1_789_948_800),
+            windowResetsAt: Date(timeIntervalSince1970: 1_789_727_758))
+        let lines = MuseQuotaClient.quotaLines(usage: usage)
+        let texts = lines.compactMap { line -> String? in
+            if case .text(let label, let value, _, _) = line, label == "Usage limit reached" {
+                return value
+            }
+            return nil
+        }
+        XCTAssertEqual(texts.count, 1)
+        XCTAssertTrue(texts[0].contains("Usage limit reached"))
+        XCTAssertFalse(texts[0].contains("/upgrade"))
     }
 
     func testParseKeyPayloadRequiresAPercent() {

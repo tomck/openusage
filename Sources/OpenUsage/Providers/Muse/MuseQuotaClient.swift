@@ -12,6 +12,10 @@ struct MuseQuotaUsage: Sendable, Equatable {
     /// Server-provided display label (`subs_tier_name`), present only on the
     /// account-endpoint path. The probe path carries just the opaque tier ID.
     var planDisplayName: String? = nil
+    /// Mirrors `is_subs_upgrade_available` from the account endpoint. Only
+    /// the key path knows it; the probe path leaves it false so the
+    /// limit-reached notice omits the /upgrade hint rather than assuming it.
+    var upgradeAvailable: Bool = false
     // Percentages are optional: nil means unknown/unavailable, not 0%.
     // This preserves the distinction between a genuine 0% reading and a
     // missing field in an undocumented response (P2-6).
@@ -380,6 +384,7 @@ struct MuseQuotaClient: Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let displayName = (json["subs_tier_name"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let upgradeAvailable = (json["is_subs_upgrade_available"] as? Bool) ?? false
         let windowDuration: Int? = {
             if let v = windowDict?["window_duration_mins"] as? Int, v > 0 { return v }
             if let n = windowDict?["window_duration_mins"].flatMap(ProviderParse.number), n > 0 { return Int(n) }
@@ -388,6 +393,7 @@ struct MuseQuotaClient: Sendable {
         return MuseQuotaUsage(
             tier: tier,
             planDisplayName: displayName,
+            upgradeAvailable: upgradeAvailable,
             weeklyUsedPercent: hasWeekly ? weeklyUsedRaw : nil,
             windowUsedPercent: hasWindow ? windowUsedRaw : nil,
             weeklyResetsAt: weeklyDict?["resets_at"].flatMap(epochDate),
@@ -610,7 +616,54 @@ struct MuseQuotaClient: Sendable {
                 periodDurationMs: 7 * 24 * 3_600 * 1_000
             ))
         }
+        // The server reports whole floored percentages: a live 99% reads as
+        // exhausted while the gauge still suggests 1% left (real requests 429
+        // against the sliver). Match the app's own "Usage limit reached"
+        // wording with the reset instead of a healthy-looking 99%. Measured
+        // meters above stay untouched — no fabricated 100%.
+        lines += flooredExhaustionLines(usage: usage)
         return lines
+    }
+
+    /// Whole-percent floor at which a window reads as exhausted (server
+    /// floors, so a live 99% means 99.0–99.99% with no usable room).
+    static let flooredExhaustionThreshold: Double = 99
+
+    /// Upgrade upsell link from the app's own limit-reached message.
+    static let upgradeURL = "https://accountscenter.meta.com/muse_code/?ep=xgrade"
+
+    /// Limit-reached notice for floored-99 windows with a known reset, in the
+    /// app's own words. Empty when no window sits at the threshold.
+    static func flooredExhaustionLines(usage: MuseQuotaUsage) -> [MetricLine] {
+        var lines: [MetricLine] = []
+        let windows: [(label: String, used: Double?, resetsAt: Date?)] = [
+            ("Weekly", usage.weeklyUsedPercent, usage.weeklyResetsAt),
+            ("Session", usage.windowUsedPercent, usage.windowResetsAt),
+        ]
+        for window in windows {
+            guard let used = window.used,
+                  used >= flooredExhaustionThreshold,
+                  let resetsAt = window.resetsAt
+            else { continue }
+            lines.append(.text(
+                label: "Usage limit reached",
+                value: flooredExhaustionMessage(
+                    window: window.label,
+                    resetsAt: resetsAt,
+                    upgradeAvailable: usage.upgradeAvailable)))
+        }
+        return lines
+    }
+
+    static func flooredExhaustionMessage(window: String, resetsAt: Date, upgradeAvailable: Bool) -> String {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "MMM d 'at' h:mm a"
+        let when = fmt.string(from: resetsAt)
+        if upgradeAvailable {
+            return "Usage limit reached · /upgrade (\(upgradeURL)) for increased limits, or wait for \(window.lowercased()) usage to reset at \(when)"
+        }
+        return "Usage limit reached, wait for \(window.lowercased()) usage to reset at \(when)"
     }
 
     /// Which window a 429 reset belongs to: "Session" when the reset sits far
