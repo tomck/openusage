@@ -70,29 +70,34 @@ enum MuseBinaryCookies {
     /// count). Lets callers tell "no such cookie" apart from "store corrupt".
     static func isWellFormed(_ data: Data) -> Bool {
         guard data.count >= 8, data[0..<4] == Data("cook".utf8) else { return false }
-        let pageCount = Int(data[museU32BE: 4])
+        guard let pageCount = data[museU32BE: 4].map(Int.init) else { return false }
         return pageCount > 0 && pageCount < 10_000 && data.count >= 8 + 4 * pageCount
     }
 
     static func allCookies(_ data: Data) -> [(url: String, name: String, value: String)] {
         var cookies: [(String, String, String)] = []
         guard data.count >= 8, data[0..<4] == Data("cook".utf8) else { return [] }
-        let pageCount = Int(data[museU32BE: 4])
-        guard pageCount > 0, pageCount < 10_000 else { return [] }
+        guard let pageCount = data[museU32BE: 4].map(Int.init),
+              pageCount > 0, pageCount < 10_000
+        else { return [] }
         var offset = 8 + 4 * pageCount
         guard data.count >= offset else { return [] }
         for index in 0..<pageCount {
-            let pageSize = Int(data[museU32BE: 8 + 4 * index])
-            guard pageSize >= 12, offset + pageSize <= data.count else { return cookies }
+            guard let pageSize = data[museU32BE: 8 + 4 * index].map(Int.init),
+                  pageSize >= 12, offset + pageSize <= data.count
+            else { return cookies }
             let page = data[offset..<(offset + pageSize)]
             offset += pageSize
             guard page.count >= 12, page[page.startIndex..<(page.startIndex + 4)] == Data([0, 0, 1, 0]) else { continue }
-            let cookieCount = Int(page[museU32LE: page.startIndex + 8])
-            guard cookieCount >= 0, cookieCount < 100_000 else { continue }
+            guard let cookieCount = page[museU32LE: page.startIndex + 8].map(Int.init),
+                  cookieCount >= 0, cookieCount < 100_000
+            else { continue }
             for slot in 0..<cookieCount {
                 let entry = page.startIndex + 12 + 4 * slot
-                guard entry + 4 <= page.endIndex else { break }
-                let recordOffset = page.startIndex + Int(page[museU32LE: entry])
+                guard entry + 4 <= page.endIndex,
+                      let recordDelta = page[museU32LE: entry].map(Int.init)
+                else { break }
+                let recordOffset = page.startIndex + recordDelta
                 guard recordOffset < page.endIndex,
                       let parsed = parseRecord(page, at: recordOffset)
                 else { continue }
@@ -103,10 +108,14 @@ enum MuseBinaryCookies {
     }
 
     private static func parseRecord(_ page: Data, at base: Data.Index) -> (String, String, String)? {
-        guard base + 28 <= page.endIndex else { return nil }
-        let urlOffset = base + Int(page[museU32LE: base + 16])
-        let nameOffset = base + Int(page[museU32LE: base + 20])
-        let valueOffset = base + Int(page[museU32LE: base + 28])
+        guard base + 28 <= page.endIndex,
+              let urlDelta = page[museU32LE: base + 16].map(Int.init),
+              let nameDelta = page[museU32LE: base + 20].map(Int.init),
+              let valueDelta = page[museU32LE: base + 28].map(Int.init)
+        else { return nil }
+        let urlOffset = base + urlDelta
+        let nameOffset = base + nameDelta
+        let valueOffset = base + valueDelta
         guard let url = cString(page, at: urlOffset),
               let name = cString(page, at: nameOffset),
               let value = cString(page, at: valueOffset)
@@ -124,15 +133,26 @@ enum MuseBinaryCookies {
 }
 
 private extension Data {
-    /// Big-endian UInt32 at an absolute offset (callers bounds-check first).
-    subscript(museU32BE offset: Index) -> UInt32 {
-        (UInt32(self[offset]) << 24) | (UInt32(self[index(offset, offsetBy: 1)]) << 16)
+    /// Big-endian UInt32 at an absolute offset, nil when out of bounds.
+    /// Total (never trapping): a corrupt store must read as absent, not crash
+    /// the refresh — `allCookies` walks attacker-shaped offsets from the file.
+    subscript(museU32BE offset: Index) -> UInt32? {
+        guard offset >= startIndex,
+              let end = index(offset, offsetBy: 4, limitedBy: endIndex),
+              end <= endIndex
+        else { return nil }
+        return (UInt32(self[offset]) << 24) | (UInt32(self[index(offset, offsetBy: 1)]) << 16)
             | (UInt32(self[index(offset, offsetBy: 2)]) << 8) | UInt32(self[index(offset, offsetBy: 3)])
     }
 
-    /// Little-endian UInt32 at an absolute offset (callers bounds-check first).
-    subscript(museU32LE offset: Index) -> UInt32 {
-        UInt32(self[offset]) | (UInt32(self[index(offset, offsetBy: 1)]) << 8)
+    /// Little-endian UInt32 at an absolute offset, nil when out of bounds.
+    /// See `museU32BE`.
+    subscript(museU32LE offset: Index) -> UInt32? {
+        guard offset >= startIndex,
+              let end = index(offset, offsetBy: 4, limitedBy: endIndex),
+              end <= endIndex
+        else { return nil }
+        return UInt32(self[offset]) | (UInt32(self[index(offset, offsetBy: 1)]) << 8)
             | (UInt32(self[index(offset, offsetBy: 2)]) << 16) | (UInt32(self[index(offset, offsetBy: 3)]) << 24)
     }
 }

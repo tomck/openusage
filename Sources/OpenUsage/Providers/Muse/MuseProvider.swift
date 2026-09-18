@@ -259,6 +259,10 @@ final class MuseProvider: ProviderRuntime {
             if let page = await attemptPageQuota(cookie: cookie) {
                 return page
             }
+            // Session rotated: forget the memoized cookie so a fresh login
+            // is picked up next poll (one approval then), instead of
+            // re-serving the dead value silently until restart.
+            await loadOffMainActor({ [cookieStore] in cookieStore.resetBrowserCookieMemo() })
             AppLog.warn(LogTag.plugin("muse"), "browser usage-page cookie rejected; visit dev.meta.ai and refresh")
             return nil
         case .unreadable:

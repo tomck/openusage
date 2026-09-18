@@ -81,6 +81,26 @@ final class MuseUsagePageTests: XCTestCase {
         XCTAssertFalse(MuseBinaryCookies.isWellFormed(Data("garbage".utf8)))
     }
 
+    /// Adversarial shapes must read as absent, never trap: `allCookies`
+    /// walks file-controlled offsets, and a real-world Cookies.binarycookies
+    /// crashed the parser (SIGILL in `parseRecord`) before the offset
+    /// readers became total.
+    func testBinaryCookiesHostileOffsetsNeverTrap() {
+        var hostile = Data("cook".utf8)
+        hostile += Data([0, 0, 0, 2]) // pageCount 2
+        hostile += Data([0, 0, 0, 40]) // page 0 size
+        hostile += Data([0, 0, 0, 16]) // page 1 size
+        hostile += Data(repeating: 0xFF, count: 56)
+        XCTAssertTrue(MuseBinaryCookies.allCookies(hostile).isEmpty)
+        XCTAssertNil(MuseBinaryCookies.cookie(named: "llm_sess", domainHint: "meta.ai", in: hostile))
+        // Maximal offsets everywhere.
+        var maxed = Data("cook".utf8)
+        maxed += Data([0, 0, 0, 1])
+        maxed += Data([0xFF, 0xFF, 0xFF, 0xFF])
+        maxed += Data(repeating: 0xFF, count: 1024)
+        XCTAssertTrue(MuseBinaryCookies.allCookies(maxed).isEmpty)
+    }
+
     func testDecryptRejectsBadVersion() {
         XCTAssertThrowsError(try MuseCookieDecrypt.decryptChromiumCookie(hex: "deadbeef", password: "x")) { error in
             XCTAssertEqual(error as? MuseCookieError, .unsupportedVersion)

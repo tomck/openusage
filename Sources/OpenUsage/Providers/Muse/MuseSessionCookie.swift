@@ -46,6 +46,28 @@ enum MuseBrowser: String, CaseIterable, Sendable {
     }
 }
 
+/// Process-wide memo for the decrypted browser cookie. Reading a Chromium
+/// cookie means a `security` call against "<Browser> Safe Storage", which
+/// pops a keychain approval dialog per invocation — without this, every
+/// refresh that reaches the cookie fallback re-prompts (and walks every
+/// installed browser doing it). Hits and misses are both memoized, mirroring
+/// `MuseKeychainMemo`; a rejected cookie resets it so a fresh login is
+/// picked up on the next poll with a single prompt, not one per refresh.
+private final class MuseBrowserCookieMemo: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: MuseBrowserCookieResult? = nil
+    func getIfSet() -> MuseBrowserCookieResult? {
+        lock.lock(); defer { lock.unlock() }
+        return result
+    }
+    func set(_ newResult: MuseBrowserCookieResult) {
+        lock.lock(); result = newResult; lock.unlock()
+    }
+    func reset() {
+        lock.lock(); result = nil; lock.unlock()
+    }
+}
+
 struct MuseSessionCookieStore: Sendable {
     static let cookieName = "llm_sess"
     static let cookieDomainHint = "meta.ai"
@@ -93,16 +115,37 @@ struct MuseSessionCookieStore: Sendable {
     /// First browser cookie found, default browser first. Throws nothing: per-browser failures
     /// fall through to the next browser, and collapse to `unreadable` only when at least one
     /// store was present-but-unreadable and nothing else yielded a cookie.
+    /// Results are memoized per process: each unmemoized read can pop a
+    /// "<Browser> Safe Storage" keychain approval, so without this every
+    /// refresh re-prompts. Reset via `resetBrowserCookieMemo()` when the
+    /// page rejects the cookie (session rotated — retry once, not per poll).
+    private let browserCookieMemo = MuseBrowserCookieMemo()
     func loadBrowserCookie() -> MuseBrowserCookieResult {
+        if let memoized = browserCookieMemo.getIfSet() {
+            return memoized
+        }
         var sawUnreadable = false
         for browser in orderedBrowsers() {
             switch loadBrowserCookie(browser) {
-            case .found(let cookie): return .found(cookie)
+            case .found(let cookie):
+                let result = MuseBrowserCookieResult.found(cookie)
+                browserCookieMemo.set(result)
+                return result
             case .unreadable: sawUnreadable = true
             case .absent: break
             }
         }
-        return sawUnreadable ? .unreadable : .absent
+        let result: MuseBrowserCookieResult = sawUnreadable ? .unreadable : .absent
+        browserCookieMemo.set(result)
+        return result
+    }
+
+    /// Forget the memoized browser-cookie outcome so the next read goes back
+    /// to the browsers. Call when the usage page rejects the cookie (fresh
+    /// login may be present) — not on every poll, or the approval dialog
+    /// returns per refresh.
+    func resetBrowserCookieMemo() {
+        browserCookieMemo.reset()
     }
 
     /// Local-only presence probe for `hasLocalCredentials`: true when any browser holds the
