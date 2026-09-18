@@ -1,6 +1,6 @@
 # Model Pricing
 
-How OpenUsage turns token counts into the estimated dollars on the Claude, Codex, Cursor, and Grok spend tiles. Grok uses the cost recorded in its session logs when available and only estimates older turns without one. OpenRouter and OpenCode do not use these estimates because their sources already report the cost directly.
+How OpenUsage turns token counts into the estimated dollars on the Claude, Codex, Cursor, Grok, and Muse Code spend tiles. Grok uses the cost recorded in its session logs when available and only estimates older turns without one. Muse Code estimates from Meta's published Muse Spark rates (Standard, or the discounted contributor rates when the session's model id carries the `-contributor` suffix). OpenRouter and OpenCode do not use these estimates because their sources already report the cost directly.
 
 ## Where prices come from
 

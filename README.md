@@ -29,6 +29,7 @@ Either way, the app updates itself in place via signed, notarized [Sparkle](docs
 - **[Cursor](docs/providers/cursor.md)** — credits, total usage, Grok Bot, Cursor Models, Other Models, requests, on-demand, per-day spend
 - **[Devin](docs/providers/devin.md)** — weekly and daily quota, extra usage balance
 - **[Grok](docs/providers/grok.md)** — weekly shared pool, pay-as-you-go, local daily spend
+- **[Muse Code](docs/providers/muse.md)** — local daily spend and usage trend from on-device session logs
 - **[Ollama](docs/providers/ollama.md)** — Ollama Cloud session and weekly limits, recent activity spend
 - **[OpenCode](docs/providers/opencode.md)** — Go session/weekly/monthly caps, Zen spend, local daily spend
 - **[OpenRouter](docs/providers/openrouter.md)** — credit balance, daily/weekly/monthly spend (API key)
@@ -63,7 +64,7 @@ For working on the code, see the developer docs: [architecture](docs/architectur
 - Universal binary — runs natively on both Apple Silicon and Intel Macs
 
 The Today / Yesterday / Last 30 Days spend tiles are computed natively from local CLI logs (Claude,
-Codex, and Grok) or Cursor's usage export — no Node.js or other runtime needed. Dollars are estimated
+Codex, Grok, and Muse Code) or Cursor's usage export — no Node.js or other runtime needed. Dollars are estimated
 with [dynamically refreshed model pricing](docs/pricing.md).
 
 

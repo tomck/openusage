@@ -112,6 +112,7 @@ For bounded progress resources, `unit` follows the provider's live metric format
 | Copilot | `premiumCredits`, `extraUsage`, `orgCredits`, `orgSpend`, `chat`, `completions` |
 | Devin | `daily`, `weekly`, `extraUsageBalance` |
 | Grok | `weekly` |
+| Muse Code | — (no quota resources; spend history only) |
 | OpenCode | `session`, `weekly`, `monthly` |
 | OpenRouter | `credits`, `balance`, `keyLimit` |
 | Z.ai | `session`, `weekly`, `webSearches` |

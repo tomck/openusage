@@ -27,6 +27,8 @@ enum DefaultLayout {
         "grok.weekly", "grok.trend",
         "grok.payAsYouGo", "grok.today", "grok.yesterday", "grok.last30",
 
+        "muse.trend", "muse.today", "muse.yesterday", "muse.last30",
+
         "ollama.session", "ollama.weekly", "ollama.last4Weeks",
 
         "opencode.session", "opencode.weekly", "opencode.monthly", "opencode.trend",
@@ -98,6 +100,10 @@ enum DefaultLayout {
         "copilot.orgCredits", "copilot.orgSpend", "copilot.chat", "copilot.completions",
         "devin.extra",
         "grok.payAsYouGo", "grok.today", "grok.yesterday", "grok.last30",
+        // Muse: the Usage Trend stays above the fold, with the spend tiles (Today/Yesterday/Last 30
+        // Days) below the caret — matching every other local-scanner provider. No menu-bar pins:
+        // with no quota meter, there is nothing pin-worthy yet (Devin precedent is also unpinned).
+        "muse.today", "muse.yesterday", "muse.last30",
         // Ollama: the Session and Weekly meters stay above the fold; the rolling four-week spend total
         // (always $0.00 on a subscription, real only for pay-as-you-go) sits below the caret.
         "ollama.last4Weeks",
