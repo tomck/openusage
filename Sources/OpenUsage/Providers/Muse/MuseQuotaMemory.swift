@@ -56,6 +56,14 @@ struct MuseQuotaMemory: Sendable, Equatable {
         )
     }
 
+    /// Reported whole percent at or below which a window cannot be the
+    /// exhausted one (floored integers: true usage below 99% still serves).
+    /// Mirrors Go's `notExhaustedBelow`.
+    static let notExhaustedBelow: Double = 98
+    /// How recently the remembered meters must be observed for the
+    /// percentage deduction to apply. Mirrors Go's `attributionFreshness`.
+    static let attributionFreshness: TimeInterval = 15 * 60
+
     /// True when the 429 reset belongs to the session window. False means
     /// weekly (or unknown): the legacy assumption.
     static func isSessionBlock(resetsAt: Date, now: Date, memory: MuseQuotaMemory?) -> Bool {
@@ -66,6 +74,28 @@ struct MuseQuotaMemory: Sendable, Equatable {
         }
         let weeklyReset = Date(timeIntervalSince1970: TimeInterval(weeklyResetUnix))
         guard now < weeklyReset else { return false } // memory expired with the old week
+        // Percentage deduction first: a window reporting ≤98 cannot be
+        // exhausted, so a 429 with a fresh session window at 0% is weekly by
+        // elimination. Requires fresh, actually observed readings — a nil
+        // windowUsed (week-only file) must not force the verdict.
+        if let observedUnix = memory.observedAtUnix {
+            let observed = Date(timeIntervalSince1970: TimeInterval(observedUnix))
+            if observed <= now, now.timeIntervalSince(observed) <= attributionFreshness {
+                if memory.windowResetUnix.map({ $0 > 0 }) ?? false,
+                   let windowUsed = memory.windowUsed, windowUsed <= notExhaustedBelow {
+                    return false // session window has room → the week is maxed
+                }
+                if let weeklyUsed = memory.weeklyUsed, weeklyUsed <= notExhaustedBelow {
+                    return true // week has room → the session window is maxed
+                }
+            }
+        }
+        // Window already reset since the reading: current window usage
+        // restarted at ~0 by definition, so it cannot be exhausted either.
+        if let windowResetUnix = memory.windowResetUnix, windowResetUnix > 0,
+           now >= Date(timeIntervalSince1970: TimeInterval(windowResetUnix)) {
+            return false
+        }
         return weeklyReset.timeIntervalSince(resetsAt) > sessionResetAmbiguity
     }
 

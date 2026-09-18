@@ -750,6 +750,69 @@ final class MuseQuotaMemoryTests: XCTestCase {
             "Weekly")
     }
 
+    func testBlockedWindowLabelFreshWindowZeroDeducesWeekly() {
+        // Percentage deduction: a 429 with a fresh session window at 0% is
+        // weekly by elimination, even though the reset looks like a session
+        // reset. Reported integers are floored, so ≤98 cannot be exhausted.
+        let memory = MuseQuotaMemory(
+            weeklyUsed: 99,
+            weeklyResetUnix: 1_800_518_400,
+            windowUsed: 0,
+            windowResetUnix: 1_800_014_400,
+            observedAtUnix: 1_799_999_940)
+        XCTAssertEqual(
+            MuseQuotaClient.blockedWindowLabel(
+                resetsAt: Date(timeIntervalSince1970: 1_800_014_400),
+                now: now, memory: memory),
+            "Weekly")
+    }
+
+    func testBlockedWindowLabelFreshWeeklyLowDeducesSession() {
+        let memory = MuseQuotaMemory(
+            weeklyUsed: 50,
+            weeklyResetUnix: 1_800_518_400,
+            windowUsed: 99,
+            windowResetUnix: 1_800_014_400,
+            observedAtUnix: 1_799_999_940)
+        XCTAssertEqual(
+            MuseQuotaClient.blockedWindowLabel(
+                resetsAt: Date(timeIntervalSince1970: 1_800_516_000),
+                now: now, memory: memory),
+            "Session")
+    }
+
+    func testBlockedWindowLabelStaleMemorySkipsDeduction() {
+        // Same shape as the weekly case but observed an hour ago: falls back
+        // to reset-distance (session here).
+        let memory = MuseQuotaMemory(
+            weeklyUsed: 99,
+            weeklyResetUnix: 1_800_518_400,
+            windowUsed: 0,
+            windowResetUnix: 1_800_014_400,
+            observedAtUnix: 1_799_996_400)
+        XCTAssertEqual(
+            MuseQuotaClient.blockedWindowLabel(
+                resetsAt: Date(timeIntervalSince1970: 1_800_014_400),
+                now: now, memory: memory),
+            "Session")
+    }
+
+    func testBlockedWindowLabelWeekOnlyMemorySkipsWindowRule() {
+        // Week-only memory (nil window reading) must not force the verdict
+        // via a zero windowUsed: reset-distance decides (session here).
+        let memory = MuseQuotaMemory(
+            weeklyUsed: 99,
+            weeklyResetUnix: 1_800_518_400,
+            windowUsed: nil,
+            windowResetUnix: nil,
+            observedAtUnix: 1_799_999_940)
+        XCTAssertEqual(
+            MuseQuotaClient.blockedWindowLabel(
+                resetsAt: Date(timeIntervalSince1970: 1_800_014_400),
+                now: now, memory: memory),
+            "Session")
+    }
+
     func testBlockedQuotaLineUsesSessionPeriodForSession() {
         let line = MuseQuotaClient.blockedQuotaLine(resetsAt: now, label: "Session")
         guard case .progress(let label, let used, _, _, _, _, _) = line else {
