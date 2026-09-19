@@ -161,7 +161,8 @@ final class MuseProvider: ProviderRuntime {
                     modelUsage: $0.modelUsage,
                     unknownModelsByDay: $0.unknownModelsByDay
                 )
-            }
+            },
+            warning: quota.warning
         )
     }
 
@@ -171,7 +172,7 @@ final class MuseProvider: ProviderRuntime {
     /// stay out of the log: only the error description is recorded.
     /// The first keychain read is off the main actor so a locked keychain
     /// (up to 5s `security` wait) does not freeze the UI (P1-3).
-    private func fetchQuotaBestEffort() async -> (lines: [MetricLine], planName: String?) {
+    private func fetchQuotaBestEffort() async -> (lines: [MetricLine], planName: String?, warning: String?) {
         // OAuth account endpoint first: same meters plus the server-provided
         // plan name, with no inference cost. Any failure falls through to
         // the Responses probe below, which also covers API-key-only setups.
@@ -182,7 +183,9 @@ final class MuseProvider: ProviderRuntime {
                 let usage = try await quotaClient.fetchKeyQuota(oauthToken: oauth)
                 let name = usage.planDisplayName.flatMap(MuseQuotaClient.planName)
                     ?? MuseQuotaClient.planName(tier: usage.tier)
-                return (MuseQuotaClient.quotaLines(usage: usage), name)
+                return (
+                    MuseQuotaClient.quotaLines(usage: usage), name,
+                    MuseQuotaClient.flooredExhaustionWarning(usage: usage))
             } catch let error as MuseQuotaError where error == .unauthorized {
                 // The owned copy may have gone stale while the CLI refreshed
                 // its own token. Re-bootstrap once from the keychain and
@@ -193,7 +196,9 @@ final class MuseProvider: ProviderRuntime {
                    let usage = try? await quotaClient.fetchKeyQuota(oauthToken: fresh) {
                     let name = usage.planDisplayName.flatMap(MuseQuotaClient.planName)
                         ?? MuseQuotaClient.planName(tier: usage.tier)
-                    return (MuseQuotaClient.quotaLines(usage: usage), name)
+                    return (
+                        MuseQuotaClient.quotaLines(usage: usage), name,
+                        MuseQuotaClient.flooredExhaustionWarning(usage: usage))
                 }
                 AppLog.info(LogTag.plugin("muse"), "account quota endpoint rejected; falling back to probe")
             } catch {
@@ -209,7 +214,8 @@ final class MuseProvider: ProviderRuntime {
                 let usage = try await quotaClient.fetchQuota(apiKey: apiKey)
                 return (
                     MuseQuotaClient.quotaLines(usage: usage),
-                    MuseQuotaClient.planName(tier: usage.tier)
+                    MuseQuotaClient.planName(tier: usage.tier),
+                    MuseQuotaClient.flooredExhaustionWarning(usage: usage)
                 )
             }
         } catch let error as MuseQuotaError {
@@ -227,7 +233,7 @@ final class MuseProvider: ProviderRuntime {
                     in: quotaClient.quotaMemoryDirectory()))
                 let label = MuseQuotaClient.blockedWindowLabel(
                     resetsAt: resetsAt, now: now(), memory: memory)
-                return ([MuseQuotaClient.blockedQuotaLine(resetsAt: resetsAt, label: label)], nil)
+                return ([MuseQuotaClient.blockedQuotaLine(resetsAt: resetsAt, label: label)], nil, nil)
             }
             AppLog.warn(LogTag.plugin("muse"), "quota probe failed; trying usage page: \(error.localizedDescription)")
         } catch {
@@ -236,10 +242,12 @@ final class MuseProvider: ProviderRuntime {
         // Last resort: cookie-authenticated usage page (ported from lassejlv's
         // upstream PR #1248). Needs no API key, no OAuth, and no page-load
         // tokens — just the `llm_sess` browser cookie. Still best-effort.
+        // No floored-99 warning here: the legacy page path renders its
+        // honest gauges without the app's limit language.
         if let page = await fetchPageQuotaBestEffort() {
-            return page
+            return (page.lines, page.planName, nil)
         }
-        return ([], nil)
+        return ([], nil, nil)
     }
 
     /// Usage-page quota via browser-session cookie. A manually saved cookie (or

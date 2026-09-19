@@ -616,12 +616,6 @@ struct MuseQuotaClient: Sendable {
                 periodDurationMs: 7 * 24 * 3_600 * 1_000
             ))
         }
-        // The server reports whole floored percentages: a live 99% reads as
-        // exhausted while the gauge still suggests 1% left (real requests 429
-        // against the sliver). Match the app's own "Usage limit reached"
-        // wording with the reset instead of a healthy-looking 99%. Measured
-        // meters above stay untouched — no fabricated 100%.
-        lines += flooredExhaustionLines(usage: usage)
         return lines
     }
 
@@ -633,9 +627,12 @@ struct MuseQuotaClient: Sendable {
     static let upgradeURL = "https://accountscenter.meta.com/muse_code/?ep=xgrade"
 
     /// Limit-reached notice for floored-99 windows with a known reset, in the
-    /// app's own words. Empty when no window sits at the threshold.
-    static func flooredExhaustionLines(usage: MuseQuotaUsage) -> [MetricLine] {
-        var lines: [MetricLine] = []
+    /// app's own words — surfaced as the snapshot `warning` (amber triangle),
+    /// not a `.text` line, because no dashboard descriptor consumes `.text`.
+    /// Weekly wins when both sit at the threshold (same order as Go, which
+    /// keeps the first `muse_quota_blocked` diagnostic). Nil when no window
+    /// qualifies; measured meters stay untouched — no fabricated 100%.
+    static func flooredExhaustionWarning(usage: MuseQuotaUsage) -> String? {
         let windows: [(label: String, used: Double?, resetsAt: Date?)] = [
             ("Weekly", usage.weeklyUsedPercent, usage.weeklyResetsAt),
             ("Session", usage.windowUsedPercent, usage.windowResetsAt),
@@ -645,14 +642,12 @@ struct MuseQuotaClient: Sendable {
                   used >= flooredExhaustionThreshold,
                   let resetsAt = window.resetsAt
             else { continue }
-            lines.append(.text(
-                label: "Usage limit reached",
-                value: flooredExhaustionMessage(
-                    window: window.label,
-                    resetsAt: resetsAt,
-                    upgradeAvailable: usage.upgradeAvailable)))
+            return flooredExhaustionMessage(
+                window: window.label,
+                resetsAt: resetsAt,
+                upgradeAvailable: usage.upgradeAvailable)
         }
-        return lines
+        return nil
     }
 
     static func flooredExhaustionMessage(window: String, resetsAt: Date, upgradeAvailable: Bool) -> String {
