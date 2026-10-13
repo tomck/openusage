@@ -569,6 +569,18 @@ struct MuseQuotaClient: Sendable {
         return name
     }
 
+    /// Resolve the tile plan label. A server-provided display name
+    /// (`subs_tier_name`, account-endpoint path) always wins so
+    /// upgrades/downgrades self-correct; the user-attested
+    /// `provider_paths.plan_name` override is fallback for the probe path,
+    /// whose opaque tier ID cannot become a name; the tier-derived value is
+    /// last resort. Pure for testability.
+    static func resolvePlanName(serverPlan: String?, override: String?, fallback: String?) -> String? {
+        if let serverPlan, !serverPlan.isEmpty { return serverPlan }
+        if let override, !override.isEmpty { return override }
+        return fallback
+    }
+
     /// Display name for a raw tier: "Muse Code Everyday Usage" becomes
     /// "Everyday Usage". Opaque IDs (the event carries an account-scoped tier
     /// ID, not a plan name) pass through unchanged rather than guessed at.

@@ -391,6 +391,30 @@ final class MuseQuotaClientTests: XCTestCase {
         XCTAssertNil(client.planNameOverride())
     }
 
+    func testResolvePlanNameServerWinsOverStaleOverride() {
+        // The reported downgrade bug: saved "High Usage" must not shadow a
+        // live server "Everyday Usage".
+        XCTAssertEqual(
+            MuseQuotaClient.resolvePlanName(
+                serverPlan: "Everyday Usage", override: "High Usage",
+                fallback: "27681393394859588"),
+            "Everyday Usage")
+        // Override still covers the probe path (opaque tier, no display).
+        XCTAssertEqual(
+            MuseQuotaClient.resolvePlanName(
+                serverPlan: nil, override: "Everyday Usage",
+                fallback: "27681393394859588"),
+            "Everyday Usage")
+        // Nothing anywhere: opaque tier passthrough, as before.
+        XCTAssertEqual(
+            MuseQuotaClient.resolvePlanName(
+                serverPlan: nil, override: nil,
+                fallback: "27681393394859588"),
+            "27681393394859588")
+        XCTAssertNil(MuseQuotaClient.resolvePlanName(
+            serverPlan: nil, override: nil, fallback: nil))
+    }
+
     @MainActor
     func testMalformedKeychainBlobIsNeverSent() async {
         let http = RoutingHTTPClient { _ in
@@ -639,6 +663,37 @@ final class MuseQuotaProviderTests: XCTestCase {
         XCTAssertNil(snapshot.errorCategory)
         XCTAssertEqual(museProgress(snapshot.lines, "Session")?.used, 42)
         XCTAssertEqual(snapshot.plan, "Everyday Usage")
+    }
+
+    @MainActor
+    func testRefreshPrefersServerPlanOverStaleOverride() async throws {
+        // Downgrade self-correction: the account endpoint reports the live
+        // display name ("Test Usage" fixture) while the saved override still
+        // says "High Usage" — the server must win.
+        let settings = """
+            {"accounts": [{"id": "muse-code", "provider": "muse_code",
+              "provider_paths": {"plan_name": "High Usage"}}]}
+            """
+        let provider = MuseProvider(
+            authStore: MuseAuthStore(
+                files: FakeFiles(), environment: FakeEnvironment([:]),
+                homeDirectory: { URL(fileURLWithPath: "/nonexistent-muse-quota") }),
+            usageScanner: MuseUsageScanner(
+                environment: FakeEnvironment([:]),
+                homeDirectory: { URL(fileURLWithPath: "/nonexistent-muse-quota") },
+                incrementalScanner: IncrementalJSONLScanner()),
+            quotaClient: makeQuotaClient(
+                http: FakeHTTPClient(response: HTTPResponse(
+                    statusCode: 200, headers: [:], body: Data(museKeyFixture.utf8))),
+                keychainValue: museKeychainFixture,
+                files: [MuseQuotaClient.sharedSettingsPath: settings]),
+            now: { Date(timeIntervalSince1970: 1_800_000_000) }
+        )
+
+        let snapshot = await provider.refresh()
+
+        XCTAssertNil(snapshot.errorCategory)
+        XCTAssertEqual(snapshot.plan, "Test Usage")
     }
 
     @MainActor
